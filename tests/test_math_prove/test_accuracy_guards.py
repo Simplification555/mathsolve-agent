@@ -1,7 +1,16 @@
+import json
+
 from math_prove.agent import MathSolverAgent
 from math_prove.config import load_config, SolverConfig
 from math_prove.normalizer import equivalent_answers
-from math_prove.parser import CandidateSolution, ClassificationResult, VerificationResult
+from math_prove.parser import (
+    CandidateSolution,
+    ClassificationResult,
+    MathSolution,
+    VerificationResult,
+    parse_competition_and_validate,
+    solution_to_competition_json,
+)
 
 
 def test_common_math_formats_are_equivalent():
@@ -103,3 +112,39 @@ def test_official_stable_keeps_accuracy_guards_enabled():
     assert config.enable_equivalence_check is True
     assert config.equivalence_can_fail_candidate is True
     assert config.verifier_can_overwrite_answer is True
+
+
+def test_competition_schema_export_is_strict_and_judgeable():
+    solution = MathSolution(
+        problem_id="p2",
+        domain="calculus_real_analysis",
+        answer="2",
+        answer_type="numeric",
+        reasoning_summary="直接计算得到目标值。",
+        key_steps=["确认题目要求计算数值。", "代入并化简得到 2。"],
+        learning_hint="同类题要先确认最终要求的量。",
+        verification=VerificationResult(
+            passed=True,
+            confidence=0.91,
+            issues=[],
+        ),
+    )
+    classification = {
+        "domain": "calculus_real_analysis",
+        "difficulty": "easy",
+        "answer_type": "numeric",
+        "possible_pitfalls": ["不要把中间式当最终答案。"],
+    }
+
+    raw = solution_to_competition_json(solution, classification, indent=None)
+    data = json.loads(raw)
+    parsed = parse_competition_and_validate(raw, "p2")
+
+    assert data["final_answer"] == "2"
+    assert data["answer_latex"] == "2"
+    assert data["domain"] == ["calculus_real_analysis"]
+    assert "computation" in data["problem_type"]
+    assert data["verification"]["checked"] is True
+    assert data["confidence"] == "high"
+    assert data["status"] == "solved"
+    assert parsed.problem_id == "p2"

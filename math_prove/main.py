@@ -11,7 +11,14 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from .parser import MathSolution, fallback_solution, parse_and_validate, solution_to_json
+from .parser import (
+    MathSolution,
+    fallback_solution,
+    parse_and_validate,
+    parse_competition_and_validate,
+    solution_to_competition_json,
+    solution_to_json,
+)
 
 
 ID_FIELDS = ("problem_id", "id", "question_id", "qid", "uid", "index")
@@ -45,6 +52,7 @@ def run_single_demo(
     config_path: Optional[str] = None,
     ablation: str = "full",
     official_mode: bool = False,
+    output_schema: str = "legacy",
 ) -> None:
     from .agent import MathSolverAgent
 
@@ -68,7 +76,24 @@ def run_single_demo(
     print(f"Confidence: {solution.verification.confidence:.2f}")
     print(f"Answer: {solution.answer}")
     print("-" * 72)
-    print(solution_to_json(solution))
+    run_log = getattr(agent, "last_run_log", {})
+    print(_serialize_solution(solution, run_log, output_schema, indent=2))
+
+
+def _serialize_solution(
+    solution: MathSolution,
+    run_log: Dict[str, Any],
+    output_schema: str,
+    indent: Optional[int] = None,
+) -> str:
+    if output_schema == "competition":
+        classification = run_log.get("classification", {}) if isinstance(run_log, dict) else {}
+        return solution_to_competition_json(
+            solution,
+            classification=classification,
+            indent=indent,
+        )
+    return solution_to_json(solution, indent=indent)
 
 
 def run_batch(
@@ -85,6 +110,7 @@ def run_batch(
     config_path: Optional[str] = None,
     ablation: str = "full",
     official_mode: bool = False,
+    output_schema: str = "legacy",
 ) -> Dict[str, Any]:
     from .agent import MathSolverAgent
 
@@ -123,6 +149,7 @@ def run_batch(
     print(f"Loaded {total} problems from {input_path}")
     print(f"Writing JSONL to {output}")
     print(f"Writing per-problem logs to {logs}")
+    print(f"Output schema: {output_schema}")
 
     with output.open(mode, encoding="utf-8") as f_out:
         for index, record in enumerate(problems, start=1):
@@ -161,7 +188,7 @@ def run_batch(
             ):
                 fallback_count += 1
 
-            line = solution_to_json(solution, indent=None)
+            line = _serialize_solution(solution, run_log, output_schema, indent=None)
             f_out.write(line + "\n")
             f_out.flush()
             _write_problem_log(logs, pid, run_log)
@@ -173,7 +200,7 @@ def run_batch(
                 f"| conf={solution.verification.confidence:.2f} | answer={solution.answer[:80]}"
             )
 
-    all_results, schema_errors = _load_and_validate_results(output)
+    all_results, schema_errors = _load_and_validate_results(output, output_schema=output_schema)
     results_json.write_text(
         json.dumps(all_results, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -193,6 +220,7 @@ def run_batch(
         "fallback_or_unpassed_count_this_run": fallback_count,
         "config_path": config_path,
         "ablation": ablation,
+        "output_schema": output_schema,
         "elapsed_seconds": round(time.time() - started_at, 3),
     }
     summary.write_text(json.dumps(run_summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -333,7 +361,10 @@ def _read_existing_results(path: Path) -> Dict[str, Dict[str, Any]]:
     return results
 
 
-def _load_and_validate_results(path: Path) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+def _load_and_validate_results(
+    path: Path,
+    output_schema: str = "legacy",
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     results: List[Dict[str, Any]] = []
     errors: List[Dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as handle:
@@ -344,7 +375,13 @@ def _load_and_validate_results(path: Path) -> Tuple[List[Dict[str, Any]], List[D
             try:
                 obj = json.loads(line)
                 pid = str(obj.get("problem_id") or f"line_{line_no}")
-                solution = parse_and_validate(json.dumps(obj, ensure_ascii=False), pid)
+                if output_schema == "competition":
+                    solution = parse_competition_and_validate(
+                        json.dumps(obj, ensure_ascii=False),
+                        pid,
+                    )
+                else:
+                    solution = parse_and_validate(json.dumps(obj, ensure_ascii=False), pid)
                 results.append(solution.model_dump(mode="json"))
             except Exception as exc:
                 errors.append({"line": line_no, "error": f"{type(exc).__name__}: {exc}"})
@@ -382,6 +419,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", "-n", type=int, default=None, help="Only process first N rows")
     parser.add_argument("--resume", action="store_true", help="Skip IDs already in output JSONL")
     parser.add_argument("--demo", action="store_true", help="Run a single demo problem")
+    parser.add_argument(
+        "--output-schema",
+        choices=("legacy", "competition"),
+        default="legacy",
+        help="JSON output schema: legacy internal schema or official competition schema",
+    )
     parser.add_argument("--config", type=str, default=None, help="JSON/YAML runtime config")
     parser.add_argument(
         "--official",
@@ -414,6 +457,7 @@ def main() -> None:
             args.config,
             args.ablation,
             args.official,
+            args.output_schema,
         )
         return
 
@@ -431,6 +475,7 @@ def main() -> None:
         config_path=args.config,
         ablation=args.ablation,
         official_mode=args.official,
+        output_schema=args.output_schema,
     )
 
 

@@ -146,6 +146,15 @@ ERROR_TYPE_HINTS = [
 ]
 
 
+OFFICIAL_EVALUATION_PRINCIPLES = """\
+正式数学评测没有“差不多正确”：答案错、格式错、漏条件、漏情况、
+不可判分都视为失败。先看清题目目标，再处理定义域、边界、参数条件、
+多解、增根、最优性或证明闭合性。不要把不确定结论伪装成确定答案；
+如果无法可靠解决，必须明确降级，而不是猜测。最终答案必须简短、
+标准、可解析、可复核。
+"""
+
+
 COMMON_SYSTEM = """\
 You are MathSolve-Agent, a single Intern-S1 based mathematical reasoning agent.
 Your priority is correctness and a judgeable structured result.
@@ -155,8 +164,9 @@ Rules:
 - If cases are needed, discuss all relevant cases.
 - Keep the final answer concise and easy to parse.
 - Use local symbolic/numeric tools only as verification support when helpful.
+- Use Chinese for natural-language explanation fields; use LaTeX for formulas.
 - Output valid JSON only when a JSON schema is requested.
-"""
+""" + "\nOfficial evaluation principles:\n" + OFFICIAL_EVALUATION_PRINCIPLES
 
 
 CLASSIFY_SYSTEM = COMMON_SYSTEM + """\
@@ -198,10 +208,17 @@ Solve the problem according to the plan. Output ONLY one JSON object:
 }
 
 Keep key_steps to at most 5 items. Put no long derivation in final_answer.
+Use Chinese in reasoning_summary, key_steps, assumptions, target,
+derivation_steps, and checkable_claims. The final_answer must be the shortest
+judgeable answer, not a narrative paragraph.
 Use assumptions/target/derivation_steps/checkable_claims as a compact,
 verifier-friendly intermediate form. For easy numeric questions these may be
 short; for proof, topology, abstract algebra, or hard questions, fill them with
 the actual logical structure of the solution.
+Before writing final_answer, check the original problem target, domain,
+boundary/initial conditions, parameter ranges, missing cases, extraneous roots,
+and answer format. If the answer cannot be reliably determined, use
+"unable_to_determine" instead of guessing.
 If the problem is a proof or topology-style task, verification_code may be empty.
 If you write verification_code, keep it short and make the last relevant output a
 single clean line exactly like:
@@ -238,6 +255,8 @@ Verify the proposed solution. Output ONLY one JSON object:
 
 Use confidence from 0 to 1. Mark passed=false if assumptions, theorem conditions,
 calculation, special cases, or the ability to judge the answer are doubtful.
+Set passed=true only when the final answer directly answers the question, all
+conditions/cases are covered, and the result is parseable by an automatic judge.
 Cosmetic formatting issues should go in format_check.issues and issues, but do
 not make passed=false when question_target_check, condition_check, result_check,
 and judgeability_check all pass.
@@ -290,8 +309,14 @@ Extract the final judgeable JSON. Output ONLY one JSON object:
 }
 
 The answer field must not contain the full reasoning process.
+Use Chinese in reasoning_summary, key_steps, and learning_hint. Preserve LaTeX in
+the answer when it improves judgeability.
 Do not change the mathematical content of the accepted candidate answer. Only
 compress or reformat it when the result is clearly equivalent.
+This is the internal schema; official competition output is converted from it
+when --output-schema competition is selected. Keep every field suitable for that
+final schema: direct answer, concise reasoning, concrete verification issues,
+and no unparseable prose around the JSON.
 The learning_hint must be specific to this problem. Base it on the actual method,
 possible_pitfalls, risk_points, verification.issues, or error_type. Do not use a
 generic hint such as "check theorem conditions" unless it names the concrete

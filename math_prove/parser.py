@@ -69,6 +69,26 @@ ANSWER_TYPES = {
     "other",
 }
 DIFFICULTIES = {"easy", "medium", "hard"}
+FINAL_DIFFICULTIES = {"easy", "medium", "hard", "very_hard"}
+FINAL_CONFIDENCES = {"high", "medium", "low"}
+FINAL_STATUSES = {
+    "solved",
+    "partially_solved",
+    "insufficient_information",
+    "unsolved",
+}
+FINAL_PROBLEM_TYPES = {
+    "computation",
+    "proof",
+    "derivation",
+    "classification",
+    "construction",
+    "counterexample",
+    "optimization",
+    "equation_solving",
+    "theorem_application",
+    "multi_step_reasoning",
+}
 ERROR_TYPES = {
     "none",
     "missing_condition",
@@ -133,6 +153,19 @@ def normalize_difficulty(value: Any) -> str:
     aliases = {"simple": "easy", "normal": "medium", "difficult": "hard"}
     raw = aliases.get(raw, raw)
     return raw if raw in DIFFICULTIES else "medium"
+
+
+def normalize_final_difficulty(value: Any) -> str:
+    raw = str(value or "medium").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "simple": "easy",
+        "normal": "medium",
+        "difficult": "hard",
+        "very hard": "very_hard",
+        "veryhard": "very_hard",
+    }
+    raw = aliases.get(raw, raw)
+    return raw if raw in FINAL_DIFFICULTIES else "medium"
 
 
 def normalize_error_type(value: Any) -> str:
@@ -491,6 +524,131 @@ class MathSolution(BaseModel):
         return []
 
 
+class FinalVerification(BaseModel):
+    checked: bool = False
+    summary: str = ""
+    risk_points: List[str] = Field(default_factory=list)
+
+    @field_validator("summary")
+    @classmethod
+    def summary_short(cls, value: Any) -> str:
+        return _stringify(value, 800)
+
+    @field_validator("risk_points", mode="before")
+    @classmethod
+    def risk_points_list(cls, value: Any) -> List[str]:
+        return _list_text(value, 260, 8)
+
+
+class EducationalExplanation(BaseModel):
+    key_insight: str = ""
+    common_mistakes: List[str] = Field(default_factory=list)
+    transfer_hint: str = ""
+
+    @field_validator("key_insight", "transfer_hint")
+    @classmethod
+    def text_short(cls, value: Any) -> str:
+        return _stringify(value, 500)
+
+    @field_validator("common_mistakes", mode="before")
+    @classmethod
+    def mistakes_list(cls, value: Any) -> List[str]:
+        return _list_text(value, 260, 6)
+
+
+class CompetitionSolution(BaseModel):
+    """Official final JSON schema used for math-agent competition output."""
+
+    problem_id: str = ""
+    domain: List[str] = Field(default_factory=list)
+    problem_type: List[str] = Field(default_factory=list)
+    difficulty_estimate: str = "medium"
+    final_answer: str = ""
+    answer_latex: str = ""
+    solution_summary: str = ""
+    key_reasoning: List[str] = Field(default_factory=list)
+    verification: FinalVerification = Field(default_factory=FinalVerification)
+    educational_explanation: EducationalExplanation = Field(
+        default_factory=EducationalExplanation
+    )
+    confidence: str = "low"
+    status: str = "unsolved"
+
+    @field_validator("problem_id")
+    @classmethod
+    def problem_id_string(cls, value: Any) -> str:
+        return _stringify(value, 120)
+
+    @field_validator("domain", mode="before")
+    @classmethod
+    def domain_list(cls, value: Any) -> List[str]:
+        raw_items = _list_text(value, 120, 6)
+        domains: List[str] = []
+        for item in raw_items:
+            normalized = normalize_domain(item)
+            if normalized == "other" and item.lower() not in {"other", ""}:
+                domain = _trim(item, 120)
+            else:
+                domain = normalized
+            if domain and domain not in domains:
+                domains.append(domain)
+        return domains
+
+    @field_validator("problem_type", mode="before")
+    @classmethod
+    def problem_type_list(cls, value: Any) -> List[str]:
+        raw_items = _list_text(value, 120, 6)
+        aliases = {
+            "calculate": "computation",
+            "calculation": "computation",
+            "numeric": "computation",
+            "compute": "computation",
+            "prove": "proof",
+            "证明": "proof",
+            "derive": "derivation",
+            "solve": "equation_solving",
+            "equation": "equation_solving",
+            "equation solving": "equation_solving",
+            "theorem": "theorem_application",
+            "multi step": "multi_step_reasoning",
+            "multi-step": "multi_step_reasoning",
+        }
+        problem_types: List[str] = []
+        for item in raw_items:
+            key = item.strip().lower().replace("-", "_").replace(" ", "_")
+            key = aliases.get(item.strip().lower(), aliases.get(key, key))
+            if key in FINAL_PROBLEM_TYPES and key not in problem_types:
+                problem_types.append(key)
+        return problem_types or ["multi_step_reasoning"]
+
+    @field_validator("difficulty_estimate")
+    @classmethod
+    def difficulty_allowed(cls, value: Any) -> str:
+        return normalize_final_difficulty(value)
+
+    @field_validator("final_answer", "answer_latex", "solution_summary", mode="before")
+    @classmethod
+    def final_text_fields(cls, value: Any) -> str:
+        return _stringify(value, 1200)
+
+    @field_validator("key_reasoning", mode="before")
+    @classmethod
+    def reasoning_list(cls, value: Any) -> List[str]:
+        return _list_text(value, 300, 8)
+
+    @field_validator("confidence")
+    @classmethod
+    def confidence_allowed(cls, value: Any) -> str:
+        raw = str(value or "low").strip().lower()
+        return raw if raw in FINAL_CONFIDENCES else "low"
+
+    @field_validator("status")
+    @classmethod
+    def status_allowed(cls, value: Any) -> str:
+        raw = str(value or "unsolved").strip().lower().replace("-", "_").replace(" ", "_")
+        return raw if raw in FINAL_STATUSES else "unsolved"
+
+
 class LogEntry(BaseModel):
     """Backward-compatible compact log entry for callers that still import it."""
 
@@ -602,6 +760,208 @@ def validate_solution_dict(data: Dict[str, Any], problem_id: str) -> MathSolutio
     return MathSolution(**payload)
 
 
+def _get_classification_value(classification: Any, key: str, default: Any = "") -> Any:
+    if classification is None:
+        return default
+    if isinstance(classification, BaseModel):
+        return getattr(classification, key, default)
+    if isinstance(classification, dict):
+        return classification.get(key, default)
+    return default
+
+
+def _infer_final_problem_types(
+    solution: MathSolution,
+    classification: Optional[Any] = None,
+) -> List[str]:
+    answer_type = str(
+        solution.answer_type
+        or _get_classification_value(classification, "answer_type", "")
+        or ""
+    )
+    domain = str(solution.domain or _get_classification_value(classification, "domain", ""))
+    subtype = str(_get_classification_value(classification, "subtype", ""))
+    goal = str(_get_classification_value(classification, "goal", ""))
+    text = " ".join([answer_type, domain, subtype, goal]).lower()
+
+    problem_types: List[str] = []
+    if any(token in text for token in ("proof", "prove", "证明", "show that")):
+        problem_types.append("proof")
+    if any(token in text for token in ("counterexample", "反例")):
+        problem_types.append("counterexample")
+    if any(token in text for token in ("construct", "构造")):
+        problem_types.append("construction")
+    if any(token in text for token in ("classify", "classification", "分类")):
+        problem_types.append("classification")
+    if "optimization" in text or "operations_research" in text or "最优" in text:
+        problem_types.append("optimization")
+    if any(token in text for token in ("equation", "root", "roots", "solve", "方程", "解集")):
+        problem_types.append("equation_solving")
+    if answer_type in {"formula", "numeric", "choice", "set", "interval", "matrix", "vector", "tuple"}:
+        problem_types.append("computation")
+    if any(token in text for token in ("derive", "derivation", "推导")):
+        problem_types.append("derivation")
+
+    if not problem_types:
+        problem_types.append("multi_step_reasoning")
+
+    unique: List[str] = []
+    for item in problem_types:
+        if item in FINAL_PROBLEM_TYPES and item not in unique:
+            unique.append(item)
+    return unique[:4] or ["multi_step_reasoning"]
+
+
+def _final_confidence(solution: MathSolution) -> str:
+    confidence = float(solution.verification.confidence or 0.0)
+    if solution.verification.passed and confidence >= 0.80:
+        return "high"
+    if confidence >= 0.55:
+        return "medium"
+    return "low"
+
+
+def _final_status(solution: MathSolution) -> str:
+    answer = str(solution.answer or "").strip()
+    issues_text = " ".join(solution.verification.issues).lower()
+    if not answer or answer == "unable_to_determine":
+        if any(token in issues_text for token in ("insufficient", "missing problem", "条件不足")):
+            return "insufficient_information"
+        return "unsolved"
+    if solution.verification.passed:
+        return "solved"
+    if any(token in issues_text for token in ("insufficient", "条件不足", "缺少条件")):
+        return "insufficient_information"
+    return "partially_solved"
+
+
+def _answer_latex(solution: MathSolution) -> str:
+    try:
+        from .normalizer import normalize_answer
+
+        normalized = normalize_answer(solution.answer, solution.answer_type)
+        return normalized.latex or solution.answer
+    except Exception:
+        return solution.answer
+
+
+def _verification_summary(solution: MathSolution, status: str) -> str:
+    if status == "solved":
+        parts = ["已检查题目目标、条件使用、最终答案格式和可判分性"]
+        if solution.verification.confidence:
+            parts.append(f"内部置信度为 {solution.verification.confidence:.2f}")
+        return "；".join(parts) + "。"
+    if solution.verification.issues:
+        return "未完全通过校验：" + "；".join(solution.verification.issues[:3])
+    return "答案未达到 solved 标准，保留为非完全解决状态。"
+
+
+def _coerce_competition_payload(data: Dict[str, Any], problem_id: str = "") -> Dict[str, Any]:
+    payload = dict(data)
+    payload["problem_id"] = str(payload.get("problem_id") or problem_id or "")
+    if "final_answer" not in payload and "answer" in payload:
+        payload["final_answer"] = payload.get("answer")
+    payload.setdefault("final_answer", "")
+    payload.setdefault("answer_latex", payload.get("final_answer", ""))
+    payload.setdefault("domain", payload.get("domain", []))
+    payload.setdefault("problem_type", payload.get("problem_type", []))
+    payload.setdefault("difficulty_estimate", payload.get("difficulty", "medium"))
+    if "solution_summary" not in payload:
+        payload["solution_summary"] = payload.get("reasoning_summary", "")
+    if "key_reasoning" not in payload:
+        payload["key_reasoning"] = payload.get("key_steps", [])
+    payload.setdefault(
+        "verification",
+        {
+            "checked": False,
+            "summary": "",
+            "risk_points": [],
+        },
+    )
+    payload.setdefault(
+        "educational_explanation",
+        {
+            "key_insight": "",
+            "common_mistakes": [],
+            "transfer_hint": "",
+        },
+    )
+    payload.setdefault("confidence", "low")
+    payload.setdefault("status", "unsolved")
+    return payload
+
+
+def validate_competition_solution_dict(
+    data: Dict[str, Any],
+    problem_id: str = "",
+) -> CompetitionSolution:
+    payload = _coerce_competition_payload(data, problem_id)
+    return CompetitionSolution(**payload)
+
+
+def parse_competition_and_validate(raw_text: str, problem_id: str = "") -> CompetitionSolution:
+    data = parse_json_object(raw_text)
+    return validate_competition_solution_dict(data, problem_id)
+
+
+def solution_to_competition_dict(
+    solution: MathSolution,
+    classification: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Convert the internal legacy solution to the strict official final schema."""
+
+    status = _final_status(solution)
+    confidence = _final_confidence(solution)
+    difficulty = normalize_final_difficulty(
+        _get_classification_value(classification, "difficulty", "medium")
+    )
+    classification_risks = _list_text(
+        _get_classification_value(classification, "risk_points", []), 260, 6
+    )
+    possible_mistakes = _list_text(
+        _get_classification_value(classification, "possible_pitfalls", []), 260, 6
+    )
+    risk_points = list(solution.verification.issues[:6])
+    for item in classification_risks:
+        if status != "solved" and item not in risk_points:
+            risk_points.append(item)
+    common_mistakes = []
+    for item in possible_mistakes + list(solution.verification.issues):
+        if item and item not in common_mistakes:
+            common_mistakes.append(item)
+
+    final_answer = solution.answer
+    if final_answer == "unable_to_determine":
+        final_answer = "无法可靠确定"
+    key_reasoning = solution.key_steps or []
+    key_insight = solution.learning_hint or (key_reasoning[0] if key_reasoning else "")
+    transfer_hint = solution.learning_hint or "同类题应先锁定题目目标，再逐项检查定义域、条件和最终答案格式。"
+
+    payload = {
+        "problem_id": solution.problem_id,
+        "domain": [solution.domain] if solution.domain else [],
+        "problem_type": _infer_final_problem_types(solution, classification),
+        "difficulty_estimate": difficulty,
+        "final_answer": final_answer,
+        "answer_latex": _answer_latex(solution),
+        "solution_summary": solution.reasoning_summary,
+        "key_reasoning": key_reasoning,
+        "verification": {
+            "checked": True if status == "solved" else bool(solution.verification.confidence),
+            "summary": _verification_summary(solution, status),
+            "risk_points": risk_points[:8],
+        },
+        "educational_explanation": {
+            "key_insight": key_insight,
+            "common_mistakes": common_mistakes[:6],
+            "transfer_hint": transfer_hint,
+        },
+        "confidence": confidence,
+        "status": status,
+    }
+    return CompetitionSolution(**payload).model_dump(mode="json")
+
+
 def fallback_solution(
     problem_id: str,
     reason: str = "",
@@ -630,6 +990,20 @@ def solution_to_json(solution: MathSolution, indent: Optional[int] = 2) -> str:
     """Serialize a final solution as strict JSON."""
 
     return json.dumps(solution.model_dump(mode="json"), ensure_ascii=False, indent=indent)
+
+
+def solution_to_competition_json(
+    solution: MathSolution,
+    classification: Optional[Any] = None,
+    indent: Optional[int] = 2,
+) -> str:
+    """Serialize a solution with the official competition JSON schema."""
+
+    return json.dumps(
+        solution_to_competition_dict(solution, classification=classification),
+        ensure_ascii=False,
+        indent=indent,
+    )
 
 
 def model_to_json(data: BaseModel, indent: Optional[int] = 2) -> str:
