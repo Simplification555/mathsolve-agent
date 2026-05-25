@@ -120,7 +120,9 @@ DOMAIN_SOLVE_ADDENDA: Dict[str, str] = {
     "operations_research_optimization": (
         "Optimization focus: define variables, objective, constraints, feasibility, "
         "objective value, and a global optimality certificate. For concise LP/IP/CP "
-        "or scheduling checks, verification_code may use OR-Tools."
+        "or scheduling checks, verification_code may use OR-Tools. If variables "
+        "are optimized, include both the optimizer(s) and the optimal value in "
+        "final_answer."
     ),
     "topology": (
         "Topology focus: reason from definitions, separate general topological "
@@ -166,6 +168,11 @@ Rules:
 - Use local symbolic/numeric tools only as verification support when helpful.
 - Use Chinese for natural-language explanation fields; use LaTeX for formulas.
 - Output valid JSON only when a JSON schema is requested.
+- When JSON is requested, the first non-whitespace character must be "{" and the
+  last non-whitespace character must be "}". Do not write analysis before or
+  after the JSON object.
+- Do not output private chain-of-thought. Put only compact, checkable summaries
+  in the requested JSON fields.
 """ + "\nOfficial evaluation principles:\n" + OFFICIAL_EVALUATION_PRINCIPLES
 
 
@@ -219,6 +226,9 @@ Before writing final_answer, check the original problem target, domain,
 boundary/initial conditions, parameter ranges, missing cases, extraneous roots,
 and answer format. If the answer cannot be reliably determined, use
 "unable_to_determine" instead of guessing.
+For optimization problems with variables, final_answer must include both the
+optimal value and the optimizer(s), unless the problem explicitly asks only for
+the value.
 If the problem is a proof or topology-style task, verification_code may be empty.
 If you write verification_code, keep it short and make the last relevant output a
 single clean line exactly like:

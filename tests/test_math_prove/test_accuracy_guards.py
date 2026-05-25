@@ -9,6 +9,7 @@ from math_prove.parser import (
     MathSolution,
     VerificationResult,
     parse_competition_and_validate,
+    parse_and_validate,
     solution_to_competition_json,
 )
 
@@ -148,3 +149,8 @@ def test_competition_schema_export_is_strict_and_judgeable():
     assert data["confidence"] == "high"
     assert data["status"] == "solved"
     assert parsed.problem_id == "p2"
+
+    legacy = parse_and_validate(raw, "p2")
+    assert legacy.answer == "2"
+    assert legacy.domain == "calculus_real_analysis"
+    assert legacy.verification.passed is True

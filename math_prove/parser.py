@@ -721,10 +721,37 @@ def parse_model(raw_text: str, model: Type[T]) -> T:
 def _coerce_solution_payload(data: Dict[str, Any], problem_id: str) -> Dict[str, Any]:
     data = dict(data)
     data["problem_id"] = str(data.get("problem_id") or problem_id)
+    if isinstance(data.get("domain"), list):
+        domains = [str(item).strip() for item in data.get("domain", []) if str(item).strip()]
+        data["domain"] = domains[0] if domains else "other"
     if "answer" not in data and "final_answer" in data:
         data["answer"] = data.get("final_answer")
     if "reasoning_summary" not in data and "reasoning_process" in data:
         data["reasoning_summary"] = data.get("reasoning_process")
+    if "reasoning_summary" not in data and "solution_summary" in data:
+        data["reasoning_summary"] = data.get("solution_summary")
+    if "key_steps" not in data and "key_reasoning" in data:
+        data["key_steps"] = data.get("key_reasoning")
+    if "learning_hint" not in data and isinstance(data.get("educational_explanation"), dict):
+        educational = data.get("educational_explanation") or {}
+        data["learning_hint"] = (
+            educational.get("transfer_hint") or educational.get("key_insight") or ""
+        )
+    verification = data.get("verification")
+    if isinstance(verification, dict) and (
+        "checked" in verification or "risk_points" in verification
+    ):
+        confidence_map = {"high": 0.9, "medium": 0.6, "low": 0.2}
+        status = str(data.get("status") or "").strip().lower()
+        confidence = confidence_map.get(str(data.get("confidence") or "").lower(), 0.0)
+        issues = verification.get("risk_points", [])
+        if status not in {"solved", ""} and verification.get("summary"):
+            issues = _list_text(issues, 300, 8) + [_stringify(verification.get("summary"), 300)]
+        data["verification"] = {
+            "passed": bool(verification.get("checked") and status == "solved"),
+            "confidence": confidence,
+            "issues": issues,
+        }
     if "verification" not in data:
         data["verification"] = {
             "passed": bool(data.get("is_solved", False)),

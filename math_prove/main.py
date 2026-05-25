@@ -7,6 +7,7 @@ import csv
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -43,6 +44,14 @@ SAMPLE_PROBLEMS = [
         ),
     },
 ]
+
+
+def _console_safe(value: Any) -> str:
+    """Keep progress printing from crashing on non-UTF Windows consoles."""
+
+    text = str(value)
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
 
 
 def run_single_demo(
@@ -196,8 +205,10 @@ def run_batch(
 
             elapsed = time.time() - item_start
             print(
-                f"  done in {elapsed:.1f}s | passed={solution.verification.passed} "
-                f"| conf={solution.verification.confidence:.2f} | answer={solution.answer[:80]}"
+                _console_safe(
+                    f"  done in {elapsed:.1f}s | passed={solution.verification.passed} "
+                    f"| conf={solution.verification.confidence:.2f} | answer={solution.answer[:80]}"
+                )
             )
 
     all_results, schema_errors = _load_and_validate_results(output, output_schema=output_schema)

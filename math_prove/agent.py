@@ -145,6 +145,8 @@ class MathSolverAgent:
             temperature=temperature,
             max_new_tokens=max_new_tokens,
         )
+        if "intern" in model_type.lower() or "intern" in base.lower():
+            self._llm.gen_params["thinking_mode"] = False
         self._sandbox = MathSandbox(timeout=self._config.sandbox_timeout)
         self._memory = Memory(recent_n=30)
         self._msg_logger = MessageLogger(name="math_prove", add_file_handler=True)
