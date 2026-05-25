@@ -8,6 +8,7 @@ from math_prove.parser import (
     ClassificationResult,
     MathSolution,
     VerificationResult,
+    fallback_solution,
     parse_competition_and_validate,
     parse_and_validate,
     solution_to_competition_json,
@@ -154,3 +155,74 @@ def test_competition_schema_export_is_strict_and_judgeable():
     assert legacy.answer == "2"
     assert legacy.domain == "calculus_real_analysis"
     assert legacy.verification.passed is True
+
+
+def test_preprocess_normalizes_double_minus_math_artifacts():
+    problem = "Minimize f(x,y)=(x--2)^2+(y--1)^2 over all (x,y) in R^2."
+
+    clean = MathSolverAgent._preprocess(problem)
+
+    assert "(x+2)^2" in clean
+    assert "(y+1)^2" in clean
+
+
+def test_deterministic_correction_fixes_quadratic_optimizer_answer():
+    agent = object.__new__(MathSolverAgent)
+    agent._config = SolverConfig(enable_normalizer=False)
+    solution = fallback_solution(
+        "q1",
+        domain="calculus_real_analysis",
+        answer_type="numeric",
+    )
+    run_log = {
+        "preprocessed_problem": "Minimize f(x,y)=(x+2)^2+(y+2)^2 over all (x,y) in R^2.",
+    }
+
+    corrected = agent._finish(run_log, solution, 0.0)
+
+    assert corrected.answer == "minimum 0 at (x,y)=(-2,-2)"
+    assert corrected.verification.passed is True
+    assert run_log["deterministic_corrections"][0]["method"] == "quadratic_unconstrained_minimum"
+
+
+def test_deterministic_correction_fixes_simple_lp_answer_format():
+    agent = object.__new__(MathSolverAgent)
+    agent._config = SolverConfig(enable_normalizer=False)
+    solution = fallback_solution(
+        "lp1",
+        domain="operations_research_optimization",
+        answer_type="tuple",
+    )
+    run_log = {
+        "preprocessed_problem": (
+            "Maximize 3x+5y subject to x+y<=10, x<=6, y<=7, x>=0, y>=0. "
+            "Give one optimal solution and the optimal objective value."
+        ),
+    }
+
+    corrected = agent._finish(run_log, solution, 0.0)
+
+    assert corrected.answer == "(x,y)=(3,7), objective=44"
+    assert corrected.verification.passed is True
+
+
+def test_deterministic_correction_solves_linear_ode_first_intersection():
+    agent = object.__new__(MathSolverAgent)
+    agent._config = SolverConfig(enable_normalizer=False)
+    solution = fallback_solution(
+        "ode1",
+        domain="ordinary_differential_equations",
+        answer_type="numeric",
+    )
+    run_log = {
+        "preprocessed_problem": (
+            "Consider the initial value problem\n"
+            "$$ y^{\\prime}+\\frac{1}{4} y=3+2 \\cos 2 t, \\quad y(0)=0 $$\n"
+            "Determine the value of $t$ for which the solution first intersects the line $y=12$."
+        ),
+    }
+
+    corrected = agent._finish(run_log, solution, 0.0)
+
+    assert abs(float(corrected.answer) - 10.065778) < 1e-5
+    assert corrected.verification.passed is True
